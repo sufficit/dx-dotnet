@@ -17,6 +17,7 @@ namespace MercadoPago
         private string _proxyHostName;
         private int _proxyPort = -1;
 
+        private static TrafficLight _trafficLight;
         public string ProxyHostName
         {
             get { return _proxyHostName; }
@@ -274,7 +275,7 @@ namespace MercadoPago
                 if (payloadType != PayloadType.JSON)
                 {
                     var parametersDict = payload.ToObject<Dictionary<string, string>>();
-                    StringBuilder parametersString = new StringBuilder();
+                    var parametersString = new StringBuilder();
                     parametersString.Append(string.Format("{0}={1}", parametersDict.First().Key, parametersDict.First().Value));
                     parametersDict.Remove(parametersDict.First().Key);
                     foreach (var value in parametersDict)
@@ -329,9 +330,12 @@ namespace MercadoPago
             {
                 try
                 {
-                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                    using (HttpWebResponse resultApi = (HttpWebResponse)request.GetResponse())
                     {
-                        return convertToApiResponse(response);
+                        var response =  convertToApiResponse(resultApi);
+                        var th = new Thread(() => SendInsightInformationAsync (response , retries));
+                        th.Start();
+                        return response;
                     }
                 }
                 catch (WebException ex)
@@ -340,7 +344,10 @@ namespace MercadoPago
                     {
                         using (HttpWebResponse errorResponse = ex.Response as HttpWebResponse)
                         {
-                            return convertToApiResponse(errorResponse);
+                             var response =  convertToApiResponse(errorResponse);
+                             var th = new Thread(() => SendInsightInformationAsync (response , retries));
+                             th.Start();
+                             return response;
                         }
                     }
                     
@@ -351,7 +358,87 @@ namespace MercadoPago
             } while (true);
         }
 
+        
+        private async Task<T> ExecuteRequestAsync(MPRequest request)
+        {
+                try
+                {
+                    using (HttpWebResponse response = (HttpWebResponse)request.GetResponseAsync())
+                    {
+                        var newStream = response.GetResponseStream();
+                        var sr = new StreamReader(newStream);    
+                        var result = sr.ReadToEnd();    
+                        return JsonConvert.DeserializeObject<T>(result);
+                        
+                    }
+                }
+                catch (WebException ex)
+                {
+                    //TODO log error?
+                    return null;
+                }
+
+        }
+        private async void SendInsightInformationAsync(MPAPIResponse apiResult, int retries)
+        {
+            if (this._trafficLight == null || this._trafficLight.ExpirationTime > DateTime.Now)
+            {
+                    this._trafficLight = await GetTrafficLightAsync();
+                    this._trafficLight.ExpiredTime = DateTime.Now.AddSeconds(trafficLight.TTL);
+            }
+
+            if (this._trafficLight.SendData)
+            {
+                var client_information = new {
+                    name ="MercadoPago-SDK-DotNet",
+                    version  = SDK.Version
+                };
+
+                var connection_info = new {
+                    protocol_info = new{ 
+                            name = "http",
+                            protocol_http =  new {
+                                request_method = apiResult.HttpMethod,
+                                request_url = apiResult.Url,
+                                request_headers = new {
+                                content_type = apiResult.Request.Headers["Content-Type"] ?? string.Empty,
+                                content_length = apiResult.Request.Headers["Content-Length"] ?? string.Empty,
+                                },
+                                response_status_code = apiResult.StatusCode,
+                                response_headers = new {
+                                content_type = apiResult.Response.Headers["Content-Type"] ?? string.Empty,
+                                content_length = apiResult.Response.Headers["Content-Length"] ?? string.Empty,
+                                },
+                            }
+                    }
+                };
+
+                var body = new JObject();
+                body.Add("client_info" ,  client_information);
+                body.Add("connection_info" ,  connection_info);
+                var request = CreateRequest(HttpMethod.POST, "https://events.mercadopago.com/v2/metric", PayloadType.JSON ,body,null,1000,0);
+                await ExecuteRequestAsync(request);
+            }
+             
+        }
+
+        private async TrafficLight GetTrafficLightAsync()
+        {
+            
+            var client_information = new {
+                name ="MercadoPago-SDK-DotNet",
+                version  = SDK.Version
+            };
+            var body = new JObject();
+            body.Add("client-info" , client_information);
+
+            var request = CreateRequest(httpMethod.Posdt,"https://events.mercadopago.com/v2/traffic-light" , PayloadType.JSON , body , null , 1000 , 0);
+
+           return await ExecuteRequestAsync<TrafficLight>(request);
+        }
+
         #endregion
     }
 }
 
+//https://github.com/masroore/CurlSharp/blob/master/CurlSharp/CurlEasy.cs

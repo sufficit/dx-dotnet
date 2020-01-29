@@ -101,15 +101,6 @@ namespace MercadoPago
         public static MPBase GetResourceFromJson<T>(string json) where T : MPBase
         {
             JsonSerializer serializer = new JsonSerializer();
-            //{ 
-            //    NullValueHandling = NullValueHandling.Ignore,
-            //    ContractResolver = new CustomDeserializationContractResolver()
-            //};
-
-            //serializer.Converters.Add(new IsoDateTimeConverter()
-            //{
-            //    DateTimeFormat = "yyyy-MM-dd'T'HH:mm:ss.fffK"
-            //});
 
             T resource = JsonConvert.DeserializeObject<T>(json);//(T)jObj.ToObject<T>(serializer);
 
